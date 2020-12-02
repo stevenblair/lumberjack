@@ -111,6 +111,8 @@ type Logger struct {
 	// It runs with own goroutine, so it is not blocking
 	AfterCompressFunc func(filepath string)
 
+	sg *sync.WaitGroup
+
 	size int64
 	file *os.File
 	mu   sync.Mutex
@@ -193,15 +195,18 @@ func (l *Logger) Rotate() error {
 	return l.rotate()
 }
 
-// RotateBlock causes Logger to close the existing log file and immediately create a
+// RotateWait causes Logger to close the existing log file and immediately create a
 // new one.  This is a helper function for applications that want to initiate
 // rotations outside of the normal rotation rules, such as in response to
 // SIGHUP.  After rotating, this initiates compression and removal of old log
 // files according to the configuration.
-func (l *Logger) RotateBlock() error {
+func (l *Logger) RotateWait(sg *sync.WaitGroup) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.millRunOnce()
+
+	l.sg = sg
+
+	return l.rotate()
 }
 
 // rotate closes the current file, moves it aside with a timestamp in the name,
@@ -316,7 +321,7 @@ func (l *Logger) filename() string {
 // Log files are compressed if enabled via configuration and old log
 // files are removed, keeping at most l.MaxBackups files, as long as
 // none of them are older than MaxAge.
-func (l *Logger) millRunOnce() error {
+func (l *Logger) millRunOnce(sg *sync.WaitGroup) error {
 	if l.MaxBackups == 0 && l.MaxAge == 0 && !l.Compress {
 		return nil
 	}
@@ -383,6 +388,9 @@ func (l *Logger) millRunOnce() error {
 		if err == nil && errCompress != nil {
 			err = errCompress
 		}
+		if errCompress == nil && l.sg != nil {
+			l.sg.Done()
+		}
 
 		if errCompress == nil && l.AfterCompressFunc != nil {
 			go l.AfterCompressFunc(fn + compressSuffix)
@@ -397,7 +405,7 @@ func (l *Logger) millRunOnce() error {
 func (l *Logger) millRun() {
 	for range l.millCh {
 		// what am I going to do, log this?
-		_ = l.millRunOnce()
+		_ = l.millRunOnce(nil)
 	}
 }
 
