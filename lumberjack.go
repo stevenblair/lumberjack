@@ -107,6 +107,10 @@ type Logger struct {
 	// using gzip. The default is not to perform compression.
 	Compress bool `json:"compress" yaml:"compress"`
 
+	// AfterCompressFunc calls just after log file is rotated and has been compressed
+	// It runs with own goroutine, so it is not blocking
+	AfterCompressFunc func(filepath string)
+
 	size int64
 	file *os.File
 	mu   sync.Mutex
@@ -187,6 +191,17 @@ func (l *Logger) Rotate() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.rotate()
+}
+
+// RotateBlock causes Logger to close the existing log file and immediately create a
+// new one.  This is a helper function for applications that want to initiate
+// rotations outside of the normal rotation rules, such as in response to
+// SIGHUP.  After rotating, this initiates compression and removal of old log
+// files according to the configuration.
+func (l *Logger) RotateBlock() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.millRunOnce()
 }
 
 // rotate closes the current file, moves it aside with a timestamp in the name,
@@ -367,6 +382,10 @@ func (l *Logger) millRunOnce() error {
 		errCompress := compressLogFile(fn, fn+compressSuffix)
 		if err == nil && errCompress != nil {
 			err = errCompress
+		}
+
+		if errCompress == nil && l.AfterCompressFunc != nil {
+			go l.AfterCompressFunc(fn + compressSuffix)
 		}
 	}
 
