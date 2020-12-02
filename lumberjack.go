@@ -107,10 +107,6 @@ type Logger struct {
 	// using gzip. The default is not to perform compression.
 	Compress bool `json:"compress" yaml:"compress"`
 
-	// AfterCompressFunc calls just after log file is rotated and has been compressed
-	// It runs with own goroutine, so it is not blocking
-	AfterCompressFunc func(filepath string)
-
 	sg *sync.WaitGroup
 
 	size int64
@@ -388,13 +384,11 @@ func (l *Logger) millRunOnce(sg *sync.WaitGroup) error {
 		if err == nil && errCompress != nil {
 			err = errCompress
 		}
-		if errCompress == nil && l.sg != nil {
-			l.sg.Done()
-		}
+	}
 
-		if errCompress == nil && l.AfterCompressFunc != nil {
-			go l.AfterCompressFunc(fn + compressSuffix)
-		}
+	// if used, signal to the WaitGroup that the log file has been dealt with
+	if l.sg != nil {
+		l.sg.Done()
 	}
 
 	return err
